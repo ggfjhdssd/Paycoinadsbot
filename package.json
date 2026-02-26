@@ -1,12 +1,14 @@
 {
   "name": "paycoinads-bot",
   "version": "1.0.0",
+  "description": "Telegram Bot for PayCoinADS",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "node-telegram-bot-api": "^0.64.0"
+    "node-telegram-bot-api": "^0.64.0",
+    "axios": "^1.6.2"
   }
 }
