@@ -15,12 +15,37 @@ if (!BOT_TOKEN || !ADMIN_ID) {
     process.exit(1);
 }
 
-// ==================== Bot Setup ====================
+// ==================== Clear any existing webhook before starting ====================
+axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`)
+    .then(res => console.log('✅ Webhook cleared:', res.data.description))
+    .catch(err => console.error('❌ Failed to clear webhook:', err.message));
+
+// ==================== Bot Setup with Auto-Recovery ====================
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// Polling error handler
-bot.on('polling_error', (error) => {
+// Polling error handler (409 Conflict prevention)
+bot.on('polling_error', async (error) => {
     console.error('❌ Polling error:', error.message);
+    
+    if (error.message.includes('409') || error.message.includes('Conflict')) {
+        console.log('🔄 409 Conflict detected - attempting recovery...');
+        
+        try {
+            await bot.stopPolling();
+            console.log('✅ Polling stopped');
+            
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // Clear webhook
+            await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`);
+            console.log('✅ Webhook cleared');
+            
+            await bot.startPolling();
+            console.log('✅ Polling restarted successfully');
+        } catch (e) {
+            console.error('❌ Recovery failed:', e.message);
+        }
+    }
 });
 
 // ==================== Helper: Fetch Config ====================
@@ -94,7 +119,8 @@ app.post('/fetch-photo', async (req, res) => {
             photoUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
         }
 
-        await axios.patch(`${API_BASE_URL}/api/admin/users/${userId}/photo`, {
+        // Update user in database (you need to implement this endpoint in Vercel)
+        await axios.post(`${API_BASE_URL}/api/admin/users/${userId}/photo`, {
             photoUrl: photoUrl
         }, {
             headers: { 'X-Telegram-Init-Data': 'bot' }
@@ -193,10 +219,10 @@ app.post('/withdrawal-notify', async (req, res) => {
                 `လူကြီးမင်း တောင်းဆိုထားသော ငွေထုတ်ယူမှု (Withdrawal) အား စစ်ဆေးပြီး ` +
                 `သင်၏ ငွေလွှဲအကောင့်ထဲသို့ ငွေများ အောင်မြင်စွာ လွှဲပြောင်းပေးပြီး ဖြစ်ပါသည်။ 💸\n\n` +
                 
-                `📝 *အချက်အလက်မျာ:*\n` +
+                `📝 *အချက်အလက်များ:*\n` +
                 `━━━━━━━━━━━━━━━━━━\n` +
                 `💰 *ပမာဏ:* \`${amount} Coins\`\n` +
-                `🏦 *နည်းလမ်း:* ${method.toUpperCase()}\n` +
+                `🏦 *နည်းလမ်း:* ${method ? method.toUpperCase() : 'N/A'}\n` +
                 `🕒 *အချိန်:* ${now}\n` +
                 `━━━━━━━━━━━━━━━━━━\n\n` +
                 
@@ -261,10 +287,37 @@ app.post('/withdrawal-notify', async (req, res) => {
 app.get('/', (req, res) => res.send('🤖 PayCoinADS Bot is Running!'));
 app.get('/health', (req, res) => res.send('OK'));
 
+// ==================== Error Handler ====================
+app.use((err, req, res, next) => {
+    console.error('❌ Express error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+});
+
 // ==================== Start Server ====================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`✅ Bot server running on port ${PORT}`);
-    console.log(`👑 Admin ID: ${ADMIN_ID}`);
-    console.log(`📢 Channel: ${CHANNEL_URL}`);
+    console.log(`
+╔══════════════════════════════════════╗
+║    🤖 PayCoinADS Bot is Ready!       ║
+╠══════════════════════════════════════╣
+║ 📡 Port: ${PORT.toString().padEnd(33)} ║
+║ 👑 Admin ID: ${ADMIN_ID.toString().padEnd(30)} ║
+║ 📢 Channel: PayCoinADS                 ║
+║ 🌐 API: ${API_BASE_URL.replace('https://', '').padEnd(27)} ║
+║ 🔄 Polling: Active                      ║
+║ 🛡️ 409 Recovery: Enabled                ║
+╚══════════════════════════════════════╝
+    `);
+});
+
+// Graceful shutdown
+process.once('SIGINT', () => {
+    console.log('\n🛑 Stopping bot...');
+    bot.stopPolling();
+    process.exit(0);
+});
+process.once('SIGTERM', () => {
+    console.log('\n🛑 Stopping bot...');
+    bot.stopPolling();
+    process.exit(0);
 });
