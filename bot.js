@@ -85,7 +85,6 @@ app.post('/fetch-photo', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
     try {
-        // Get user profile photos from Telegram
         const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
         let photoUrl = null;
 
@@ -95,7 +94,6 @@ app.post('/fetch-photo', async (req, res) => {
             photoUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
         }
 
-        // Update user in database
         await axios.patch(`${API_BASE_URL}/api/admin/users/${userId}/photo`, {
             photoUrl: photoUrl
         }, {
@@ -163,29 +161,99 @@ app.post('/broadcast', async (req, res) => {
     })();
 });
 
-// ==================== Withdrawal Notification ====================
+// ==================== WITHDRAWAL NOTIFICATION (Premium Style) ====================
 app.post('/withdrawal-notify', async (req, res) => {
-    const { userId, amount, status, reason, adminId } = req.body;
+    const { userId, amount, method, status, reason, adminId } = req.body;
 
+    // 1. Verify admin
     if (adminId !== ADMIN_ID) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
+    // 2. Validate required fields
+    if (!userId || !amount || !status) {
+        return res.status(400).json({ error: 'Missing required fields' });
+    }
+
     try {
         let message;
+        const now = new Date().toLocaleString('my-MM', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+
+        // 3. COMPLETED - Premium Style
         if (status === 'completed') {
-            message = `✅ သင်၏ ငွေထုတ်တောင်းဆိုမှု အတည်ပြုပြီးပါပြီ။\nပမာဏ: ${amount} ဒင်္ဂါး\nကျေးဇူးတင်ပါသည်။`;
-        } else if (status === 'rejected') {
-            message = `❌ သင်၏ ငွေထုတ်တောင်းဆိုမှု ငြင်းပယ်ခံရပါသည်။\nအကြောင်းရင်း: ${reason}\nငွေပမာဏ ${amount} ဒင်္ဂါးကို သင့်အကောင့်သို့ ပြန်လည်ထည့်သွင်းပေးထားပါသည်။`;
-        } else {
+            message = 
+                `🎊 *ငွေထုတ်ယူမှု အောင်မြင်ပါသည်။* 🎊\n\n` +
+                
+                `လူကြီးမင်း တောင်းဆိုထားသော ငွေထုတ်ယူမှု (Withdrawal) အား စစ်ဆေးပြီး ` +
+                `သင်၏ ငွေလွှဲအကောင့်ထဲသို့ ငွေများ အောင်မြင်စွာ လွှဲပြောင်းပေးပြီး ဖြစ်ပါသည်။ 💸\n\n` +
+                
+                `📝 *အချက်အလက်မျာ:*\n` +
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `💰 *ပမာဏ:* \`${amount} Coins\`\n` +
+                `🏦 *နည်းလမ်း:* ${method.toUpperCase()}\n` +
+                `🕒 *အချိန်:* ${now}\n` +
+                `━━━━━━━━━━━━━━━━━━\n\n` +
+                
+                `PayCoinAds ကို ယုံကြည်စွာ အသုံးပြုပေးသည့်အတွက် ကျေးဇူးတင်ပါသည်။ ` +
+                `ဆက်လက်ပြီး ဂိမ်းဆော့ရင်း ဒင်္ဂါးများ စုဆောင်းနိုင်ပါပြီ။ 🎮✨\n\n` +
+                
+                `✅ ငွေလက်ခံရရှိကြောင်းကို သင်၏ Wallet/Bank App တွင် ပြန်လည်စစ်ဆေးပေးပါရန်။`;
+        }
+
+        // 4. REJECTED - Premium Style
+        else if (status === 'rejected') {
+            message = 
+                `❌ *ငွေထုတ်ယူမှု ငြင်းပယ်ခံရပါသည်။*\n\n` +
+                
+                `လူကြီးမင်း၏ ငွေထုတ်ယူမှု တောင်းဆိုချက်မှာ အောက်ပါအကြောင်းပြချက်ကြောင့် မအောင်မြင်ပါ။\n\n` +
+                
+                `⚠️ *အကြောင်းပြချက်:* \n\`${reason || 'အကြောင်းပြချက် မရှိပါ'}\`\n\n` +
+                
+                `💰 *ပြန်အမ်းငွေ:* \`${amount} Coins\` ကို သင့်အကောင့်ထဲသို့ ပြန်လည် ထည့်သွင်းပေးထားပါသည်။\n\n` +
+                
+                `━━━━━━━━━━━━━━━━━━\n` +
+                `🕒 *အချိန်:* ${now}\n` +
+                `━━━━━━━━━━━━━━━━━━\n\n` +
+                
+                `အချက်အလက်များကို ပြန်လည်စစ်ဆေးပြီးမှသာ နောက်တစ်ကြိမ် ထပ်မံတောင်းဆိုပေးပါရန် ` +
+                `မေတ္တာရပ်ခံအပ်ပါသည်။ 🛠️`;
+        } 
+        
+        // Invalid status
+        else {
             return res.status(400).json({ error: 'Invalid status' });
         }
 
-        await bot.sendMessage(userId, message, { parse_mode: 'HTML' });
+        // 5. Send message to user
+        await bot.sendMessage(userId, message, { 
+            parse_mode: 'Markdown',
+            disable_web_page_preview: true 
+        });
+        
+        console.log(`✅ Withdrawal notification sent to user ${userId} (${status})`);
         res.json({ success: true });
+
     } catch (err) {
-        console.error('Withdrawal notification error:', err);
-        res.status(500).json({ error: err.message });
+        console.error('❌ Withdrawal notification error:', err.message);
+
+        // Handle blocked bot
+        if (err.message.includes('blocked')) {
+            return res.status(200).json({
+                success: false,
+                error: 'User has blocked the bot'
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
     }
 });
 
