@@ -1,6 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
-const axios = require('axios'); // For calling Vercel API
+const axios = require('axios');
 
 // ==================== Configuration ====================
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -8,7 +8,7 @@ const WEB_APP_URL = 'https://paycoinads-telegram-app.vercel.app';
 const ADMIN_PANEL_URL = 'https://paycoinads-telegram-app.vercel.app/admin.html?v=1.1'; 
 const CHANNEL_URL = 'https://t.me/PayCoinADS';
 const ADMIN_ID = parseInt(process.env.ADMIN_ID); 
-const API_BASE_URL = process.env.API_BASE_URL || 'https://paycoinads-telegram-app.vercel.app'; // Vercel API URL
+const API_BASE_URL = process.env.API_BASE_URL || 'https://paycoinads-telegram-app.vercel.app';
 
 if (!BOT_TOKEN || !ADMIN_ID) {
     console.error('❌ Missing Environment Variables!');
@@ -22,7 +22,7 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 async function getConfig(key) {
     try {
         const res = await axios.get(`${API_BASE_URL}/api/admin/settings`, {
-            headers: { 'X-Telegram-Init-Data': 'bot' } // Special header for bot
+            headers: { 'X-Telegram-Init-Data': 'bot' }
         });
         return res.data[key];
     } catch (err) {
@@ -35,7 +35,6 @@ async function getConfig(key) {
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     
-    // Check maintenance mode from API
     try {
         const maintenance = await getConfig('MAINTENANCE_MODE');
         if (maintenance) {
@@ -46,7 +45,6 @@ bot.onText(/\/start/, async (msg) => {
         console.error('Maintenance check error:', err);
     }
 
-    // Normal start message
     bot.sendMessage(chatId, `မင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`, {
         reply_markup: {
             inline_keyboard: [
@@ -72,33 +70,32 @@ bot.onText(/\/admin/, (msg) => {
     }
 });
 
+// ==================== Express Server Setup ====================
+const app = express();
+app.use(express.json());
+
 // ==================== Broadcast System ====================
-// This endpoint will be called by Vercel API when admin sends broadcast
-app.post('/broadcast', express.json(), async (req, res) => {
+app.post('/broadcast', async (req, res) => {
     const { message, adminId } = req.body;
     
-    // Verify admin
     if (adminId !== ADMIN_ID) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    res.status(202).json({ status: 'started' }); // Acknowledge immediately
+    res.status(202).json({ status: 'started' });
 
     try {
-        // Fetch all users from Vercel API
         const usersRes = await axios.get(`${API_BASE_URL}/api/admin/users`, {
             headers: { 'X-Telegram-Init-Data': 'bot' }
         });
         const users = usersRes.data.users || [];
         
-        // Batch processing: 50 users every 3 seconds
         const BATCH_SIZE = 50;
         const DELAY_MS = 3000;
         
         for (let i = 0; i < users.length; i += BATCH_SIZE) {
             const batch = users.slice(i, i + BATCH_SIZE);
             
-            // Send to batch concurrently
             await Promise.all(batch.map(async (user) => {
                 try {
                     await bot.sendMessage(user.userId, message, { parse_mode: 'HTML' });
@@ -107,7 +104,6 @@ app.post('/broadcast', express.json(), async (req, res) => {
                 }
             }));
             
-            // Wait before next batch (if not last batch)
             if (i + BATCH_SIZE < users.length) {
                 await new Promise(resolve => setTimeout(resolve, DELAY_MS));
             }
@@ -120,7 +116,7 @@ app.post('/broadcast', express.json(), async (req, res) => {
 });
 
 // ==================== Withdrawal Notification ====================
-app.post('/withdrawal-notify', express.json(), async (req, res) => {
+app.post('/withdrawal-notify', async (req, res) => {
     const { userId, amount, status, reason, adminId } = req.body;
     
     if (adminId !== ADMIN_ID) {
@@ -145,12 +141,11 @@ app.post('/withdrawal-notify', express.json(), async (req, res) => {
     }
 });
 
-// ==================== Express Server ====================
-const app = express();
-app.use(express.json());
-
+// ==================== Health Check ====================
 app.get('/', (req, res) => res.send('🤖 PayCoinADS Bot is Running!'));
+app.get('/health', (req, res) => res.send('OK'));
 
+// ==================== Start Server ====================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`✅ Bot server running on port ${PORT}`);
