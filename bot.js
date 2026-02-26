@@ -15,8 +15,11 @@ if (!BOT_TOKEN || !ADMIN_ID) {
     process.exit(1);
 }
 
-// ==================== Bot Setup with Auto-Recovery ====================
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+// ==================== Bot Setup ====================
+const bot = new TelegramBot(BOT_TOKEN, { 
+    polling: true,
+    onlyFirstMatch: true
+});
 
 // Polling error handler (409 Conflict prevention)
 bot.on('polling_error', async (error) => {
@@ -104,37 +107,30 @@ app.use(express.json());
 app.get('/', (req, res) => res.send('🤖 PayCoinADS Bot is Running!'));
 app.get('/health', (req, res) => res.send('OK'));
 
-// ==================== BROADCAST ENDPOINT (Vercel က ခေါ်မယ့်) ====================
+// ==================== BROADCAST ENDPOINT ====================
 app.post('/broadcast', async (req, res) => {
     const { message, adminId } = req.body;
     
-    // 1. Verify admin
     if (Number(adminId) !== ADMIN_ID) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // 2. Validate message
     if (!message || message.trim() === '') {
         return res.status(400).json({ error: 'Message is required' });
     }
 
-    // 3. Immediate response to Vercel (don't wait for broadcast to complete)
-    res.status(202).json({ 
-        success: true, 
-        message: 'Broadcast started in background' 
-    });
+    // Immediate response
+    res.status(202).json({ success: true, message: 'Broadcast started in background' });
 
-    // 4. Process broadcast in background
+    // Background process
     (async () => {
         console.log('📢 Broadcast started...');
-        console.log(`📝 Message: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`);
         
         let successCount = 0;
         let failCount = 0;
         const failedUsers = [];
 
         try {
-            // 5. Fetch users from Vercel API
             console.log('🔄 Fetching users from Vercel...');
             const usersRes = await axios.get(`${API_BASE_URL}/api/admin/users`, {
                 headers: { 'X-Telegram-Init-Data': 'bot' },
@@ -149,12 +145,10 @@ app.post('/broadcast', async (req, res) => {
                 return;
             }
 
-            // 6. Rate Limit Settings (Telegram safe)
-            const BATCH_SIZE = 50;           // 50 users per batch
-            const BATCH_DELAY = 3000;         // 3 seconds between batches
-            const USER_DELAY = 70;             // 70ms between each user (≈ 14 users/sec)
+            const BATCH_SIZE = 30; // Reduced to be safer
+            const BATCH_DELAY = 3000;
+            const USER_DELAY = 100;
 
-            // 7. Process in batches
             for (let i = 0; i < users.length; i += BATCH_SIZE) {
                 const batch = users.slice(i, i + BATCH_SIZE);
                 const batchNum = Math.floor(i / BATCH_SIZE) + 1;
@@ -162,7 +156,6 @@ app.post('/broadcast', async (req, res) => {
                 
                 console.log(`📦 Batch ${batchNum}/${totalBatches} (${batch.length} users)`);
 
-                // Send messages sequentially
                 for (const user of batch) {
                     try {
                         await bot.sendMessage(user.userId, message, { 
@@ -171,7 +164,6 @@ app.post('/broadcast', async (req, res) => {
                         });
                         successCount++;
                         
-                        // Small delay between users
                         await new Promise(resolve => setTimeout(resolve, USER_DELAY));
                         
                     } catch (err) {
@@ -179,7 +171,6 @@ app.post('/broadcast', async (req, res) => {
                         failCount++;
                         failedUsers.push(user.userId);
 
-                        // Handle rate limit errors
                         if (err.message.includes('429') || err.message.includes('flood')) {
                             console.log('⚠️ Rate limit hit, waiting 10 seconds...');
                             await new Promise(resolve => setTimeout(resolve, 10000));
@@ -187,14 +178,12 @@ app.post('/broadcast', async (req, res) => {
                     }
                 }
 
-                // Delay between batches (except last)
                 if (i + BATCH_SIZE < users.length) {
-                    console.log(`⏳ Waiting ${BATCH_DELAY/1000} seconds before next batch...`);
+                    console.log(`⏳ Waiting ${BATCH_DELAY/1000} seconds...`);
                     await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
                 }
             }
 
-            // 8. Log results
             console.log(`
 ╔══════════════════════════════════╗
 ║     📊 BROADCAST COMPLETE        ║
@@ -211,9 +200,6 @@ app.post('/broadcast', async (req, res) => {
 
         } catch (err) {
             console.error('❌ Broadcast system error:', err.message);
-            if (err.code === 'ECONNABORTED') {
-                console.error('⏰ Timeout - Vercel API too slow');
-            }
         }
     })();
 });
@@ -222,58 +208,44 @@ app.post('/broadcast', async (req, res) => {
 app.post('/withdrawal-notify', async (req, res) => {
     const { userId, amount, status, reason, adminId } = req.body;
     
-    // 1. Verify admin
     if (Number(adminId) !== ADMIN_ID) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // 2. Validate required fields
     if (!userId || !amount || !status) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
 
     try {
-        // 3. Prepare message based on status
         let message;
-        let emoji;
         
         if (status === 'completed') {
-            emoji = '✅';
-            message = `${emoji} သင်၏ ငွေထုတ်တောင်းဆိုမှု အတည်ပြုပြီးပါပြီ။\n\n` +
+            message = `✅ သင်၏ ငွေထုတ်တောင်းဆိုမှု အတည်ပြုပြီးပါပြီ။\n\n` +
                      `💰 ပမာဏ: ${amount.toLocaleString()} ဒင်္ဂါး\n` +
                      `📅 ရက်စွဲ: ${new Date().toLocaleDateString('my-MM')}\n\n` +
                      `✨ ကျေးဇူးတင်ပါသည်။`;
         } 
         else if (status === 'rejected') {
-            emoji = '❌';
-            message = `${emoji} သင်၏ ငွေထုတ်တောင်းဆိုမှု ငြင်းပယ်ခံရပါသည်။\n\n` +
+            message = `❌ သင်၏ ငွေထုတ်တောင်းဆိုမှု ငြင်းပယ်ခံရပါသည်။\n\n` +
                      `💰 ပမာဏ: ${amount.toLocaleString()} ဒင်္ဂါး\n` +
                      `📝 အကြောင်းရင်း: ${reason || 'အကြောင်းပြချက် မရှိပါ'}\n\n` +
-                     `💫 ငွေပမာဏကို သင့်အကောင့်သို့ ပြန်လည်ထည့်သွင်းပေးထားပါသည်။\n` +
-                     `⏳ ကျေးဇူးပြု၍ ပြန်လည်စစ်ဆေးပါ။`;
+                     `💫 ငွေပမာဏကို သင့်အကောင့်သို့ ပြန်လည်ထည့်သွင်းပေးထားပါသည်။`;
         } 
         else {
             return res.status(400).json({ error: 'Invalid status' });
         }
 
-        // 4. Send message to user
         await bot.sendMessage(userId, message, { 
             parse_mode: 'HTML',
             disable_web_page_preview: true 
         });
         
         console.log(`✅ Withdrawal notification sent to user ${userId} (${status})`);
-        
-        // 5. Return success
-        res.json({ 
-            success: true,
-            message: `Notification sent to user ${userId}`
-        });
+        res.json({ success: true });
         
     } catch (err) {
         console.error('❌ Withdrawal notification error:', err.message);
         
-        // Check if user has blocked the bot
         if (err.message.includes('blocked')) {
             return res.status(200).json({ 
                 success: false, 
@@ -285,24 +257,6 @@ app.post('/withdrawal-notify', async (req, res) => {
             success: false,
             error: err.message 
         });
-    }
-});
-
-// ==================== TEST ENDPOINT (for debugging) ====================
-app.post('/test-notify', async (req, res) => {
-    const { adminId } = req.body;
-    
-    if (Number(adminId) !== ADMIN_ID) {
-        return res.status(403).json({ error: 'Unauthorized' });
-    }
-
-    try {
-        await bot.sendMessage(ADMIN_ID, '🧪 Test notification from bot', {
-            parse_mode: 'HTML'
-        });
-        res.json({ success: true, message: 'Test notification sent' });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
     }
 });
 
@@ -321,10 +275,8 @@ app.listen(PORT, () => {
 ╠══════════════════════════════════════╣
 ║ 📡 Port: ${PORT.toString().padEnd(33)} ║
 ║ 👑 Admin ID: ${ADMIN_ID.toString().padEnd(30)} ║
-║ 📢 Channel: PayCoinADS                 ║
 ║ 🌐 API: ${API_BASE_URL.replace('https://', '').padEnd(27)} ║
 ║ 🔄 Polling: Active                      ║
-║ 🛡️ 409 Recovery: Enabled                ║
 ╚══════════════════════════════════════╝
     `);
 });
