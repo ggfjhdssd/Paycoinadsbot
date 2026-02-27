@@ -15,7 +15,13 @@ if (!BOT_TOKEN || !ADMIN_ID) {
     process.exit(1);
 }
 
-// ==================== Force clear webhook before starting ====================
+// ==================== Global Variables ====================
+let bot;
+let isPolling = false;
+let restartAttempts = 0;
+const MAX_RESTART_ATTEMPTS = 5;
+
+// ==================== Force clear webhook ====================
 async function forceClearWebhook() {
     try {
         console.log('🔄 Force clearing webhook...');
@@ -28,47 +34,44 @@ async function forceClearWebhook() {
     }
 }
 
-// ==================== Bot Setup with Proper Initialization ====================
-let bot;
-let isBotInitialized = false;
-
+// ==================== Initialize Bot ====================
 async function initializeBot() {
     console.log('🚀 Initializing bot...');
     
-    // Force clear webhook before starting
+    // Clear webhook before starting
     await forceClearWebhook();
     
-    // Wait 3 seconds to ensure webhook is cleared
+    // Wait 3 seconds
     await new Promise(resolve => setTimeout(resolve, 3000));
     
-    // Create new bot instance
-    bot = new TelegramBot(BOT_TOKEN, { 
-        polling: true,
-        onlyFirstMatch: true
-    });
-
-    // Set up command handlers BEFORE starting polling
-    setupCommandHandlers();
-    
-    // Mark as initialized
-    isBotInitialized = true;
-    console.log('✅ Bot initialized successfully');
-    
-    // Test bot connection
     try {
+        // Create new bot instance
+        bot = new TelegramBot(BOT_TOKEN, { 
+            polling: true,
+            onlyFirstMatch: true
+        });
+
+        isPolling = true;
+        restartAttempts = 0;
+        
+        console.log('✅ Bot polling started');
+        
+        // Set up command handlers
+        setupCommandHandlers();
+        
+        // Get bot info
         const me = await bot.getMe();
         console.log(`🤖 Bot connected: @${me.username}`);
+        
     } catch (err) {
-        console.error('❌ Bot connection test failed:', err.message);
+        console.error('❌ Failed to initialize bot:', err.message);
+        throw err;
     }
 }
 
 // ==================== Command Handlers ====================
 function setupCommandHandlers() {
-    if (!bot) {
-        console.error('❌ Bot not initialized');
-        return;
-    }
+    if (!bot) return;
 
     // /start command
     bot.onText(/\/start/, async (msg) => {
@@ -76,7 +79,6 @@ function setupCommandHandlers() {
         const chatId = msg.chat.id;
         
         try {
-            // Send immediate response
             await bot.sendMessage(chatId, `မင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`, {
                 reply_markup: {
                     inline_keyboard: [
@@ -116,16 +118,25 @@ function setupCommandHandlers() {
         if (error.message.includes('409') || error.message.includes('Conflict')) {
             console.log('🔄 409 Conflict detected - restarting bot...');
             
+            restartAttempts++;
+            
+            if (restartAttempts > MAX_RESTART_ATTEMPTS) {
+                console.error('❌ Too many restart attempts, exiting...');
+                process.exit(1);
+            }
+            
             try {
-                await bot.stopPolling();
-                console.log('✅ Polling stopped');
+                if (isPolling) {
+                    await bot.stopPolling();
+                    isPolling = false;
+                    console.log('✅ Polling stopped');
+                }
                 
                 await forceClearWebhook();
-                
                 await new Promise(resolve => setTimeout(resolve, 5000));
                 
-                await bot.startPolling();
-                console.log('✅ Polling restarted successfully');
+                await initializeBot();
+                
             } catch (e) {
                 console.error('❌ Recovery failed:', e.message);
             }
@@ -142,7 +153,8 @@ function setupCommandHandlers() {
 async function getConfig(key) {
     try {
         const res = await axios.get(`${API_BASE_URL}/api/admin/settings`, {
-            headers: { 'X-Telegram-Init-Data': 'bot' }
+            headers: { 'X-Telegram-Init-Data': 'bot' },
+            timeout: 5000
         });
         return res.data[key];
     } catch (err) {
@@ -161,8 +173,7 @@ app.get('/health', (req, res) => res.send('OK'));
 app.get('/status', (req, res) => {
     res.json({
         status: 'ok',
-        botInitialized: isBotInitialized,
-        botRunning: bot ? true : false,
+        polling: isPolling,
         timestamp: new Date().toISOString()
     });
 });
@@ -173,6 +184,10 @@ app.post('/fetch-photo', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
     try {
+        if (!bot || !isPolling) {
+            return res.status(503).json({ error: 'Bot not ready' });
+        }
+
         const photos = await bot.getUserProfilePhotos(userId, { limit: 1 });
         let photoUrl = null;
 
@@ -182,10 +197,12 @@ app.post('/fetch-photo', async (req, res) => {
             photoUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
         }
 
+        // Update user in database
         await axios.post(`${API_BASE_URL}/api/admin/users/${userId}/photo`, {
             photoUrl: photoUrl
         }, {
-            headers: { 'X-Telegram-Init-Data': 'bot' }
+            headers: { 'X-Telegram-Init-Data': 'bot' },
+            timeout: 5000
         });
 
         res.json({ success: true, photoUrl });
@@ -203,6 +220,10 @@ app.post('/broadcast', async (req, res) => {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
+    if (!bot || !isPolling) {
+        return res.status(503).json({ error: 'Bot not ready' });
+    }
+
     res.status(202).json({ status: 'started' });
 
     (async () => {
@@ -212,7 +233,8 @@ app.post('/broadcast', async (req, res) => {
 
         try {
             const usersRes = await axios.get(`${API_BASE_URL}/api/admin/users`, {
-                headers: { 'X-Telegram-Init-Data': 'bot' }
+                headers: { 'X-Telegram-Init-Data': 'bot' },
+                timeout: 15000
             });
             const users = usersRes.data.users || [];
             console.log(`👥 Total users to broadcast: ${users.length}`);
@@ -259,6 +281,10 @@ app.post('/withdrawal-notify', async (req, res) => {
 
     if (!userId || !amount || !status) {
         return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    if (!bot || !isPolling) {
+        return res.status(503).json({ error: 'Bot not ready' });
     }
 
     try {
@@ -326,7 +352,7 @@ app.use((err, req, res, next) => {
 // ==================== Start Server ====================
 const PORT = process.env.PORT || 3000;
 
-// Initialize bot THEN start server
+// Initialize bot first, then start server
 initializeBot().then(() => {
     app.listen(PORT, () => {
         console.log(`
@@ -337,6 +363,7 @@ initializeBot().then(() => {
 ║ 👑 Admin ID: ${ADMIN_ID.toString().padEnd(30)} ║
 ║ 🔄 Polling: Active                      ║
 ║ 🛡️ 409 Recovery: Enabled                ║
+║ 🔁 Max Retries: ${MAX_RESTART_ATTEMPTS}                         ║
 ╚══════════════════════════════════════╝
         `);
     });
@@ -348,11 +375,15 @@ initializeBot().then(() => {
 // Graceful shutdown
 process.once('SIGINT', () => {
     console.log('\n🛑 Stopping bot...');
-    if (bot) bot.stopPolling();
+    if (bot && isPolling) {
+        bot.stopPolling();
+    }
     process.exit(0);
 });
 process.once('SIGTERM', () => {
     console.log('\n🛑 Stopping bot...');
-    if (bot) bot.stopPolling();
+    if (bot && isPolling) {
+        bot.stopPolling();
+    }
     process.exit(0);
 });
