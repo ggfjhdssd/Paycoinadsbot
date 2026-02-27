@@ -15,38 +15,128 @@ if (!BOT_TOKEN || !ADMIN_ID) {
     process.exit(1);
 }
 
-// ==================== Clear any existing webhook before starting ====================
-axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`)
-    .then(res => console.log('✅ Webhook cleared:', res.data.description))
-    .catch(err => console.error('❌ Failed to clear webhook:', err.message));
+// ==================== Force clear webhook before starting ====================
+async function forceClearWebhook() {
+    try {
+        console.log('🔄 Force clearing webhook...');
+        const res = await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`);
+        console.log('✅ Webhook cleared:', res.data.description);
+        return true;
+    } catch (err) {
+        console.error('❌ Failed to clear webhook:', err.message);
+        return false;
+    }
+}
 
-// ==================== Bot Setup with Auto-Recovery ====================
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+// ==================== Bot Setup with Proper Initialization ====================
+let bot;
+let isBotInitialized = false;
 
-// Polling error handler (409 Conflict prevention)
-bot.on('polling_error', async (error) => {
-    console.error('❌ Polling error:', error.message);
+async function initializeBot() {
+    console.log('🚀 Initializing bot...');
     
-    if (error.message.includes('409') || error.message.includes('Conflict')) {
-        console.log('🔄 409 Conflict detected - attempting recovery...');
+    // Force clear webhook before starting
+    await forceClearWebhook();
+    
+    // Wait 3 seconds to ensure webhook is cleared
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    
+    // Create new bot instance
+    bot = new TelegramBot(BOT_TOKEN, { 
+        polling: true,
+        onlyFirstMatch: true
+    });
+
+    // Set up command handlers BEFORE starting polling
+    setupCommandHandlers();
+    
+    // Mark as initialized
+    isBotInitialized = true;
+    console.log('✅ Bot initialized successfully');
+    
+    // Test bot connection
+    try {
+        const me = await bot.getMe();
+        console.log(`🤖 Bot connected: @${me.username}`);
+    } catch (err) {
+        console.error('❌ Bot connection test failed:', err.message);
+    }
+}
+
+// ==================== Command Handlers ====================
+function setupCommandHandlers() {
+    if (!bot) {
+        console.error('❌ Bot not initialized');
+        return;
+    }
+
+    // /start command
+    bot.onText(/\/start/, async (msg) => {
+        console.log('📩 /start command received from user:', msg.from.id);
+        const chatId = msg.chat.id;
         
         try {
-            await bot.stopPolling();
-            console.log('✅ Polling stopped');
-            
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            
-            // Clear webhook
-            await axios.get(`https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`);
-            console.log('✅ Webhook cleared');
-            
-            await bot.startPolling();
-            console.log('✅ Polling restarted successfully');
-        } catch (e) {
-            console.error('❌ Recovery failed:', e.message);
+            // Send immediate response
+            await bot.sendMessage(chatId, `မင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🎮 Play Game', web_app: { url: WEB_APP_URL } }],
+                        [{ text: '📢 Join Channel', url: CHANNEL_URL }]
+                    ]
+                }
+            });
+            console.log('✅ /start response sent to user:', chatId);
+        } catch (err) {
+            console.error('❌ /start error:', err.message);
         }
-    }
-});
+    });
+
+    // /admin command
+    bot.onText(/\/admin/, (msg) => {
+        console.log('📩 /admin command received from user:', msg.from.id);
+        const chatId = msg.chat.id;
+        
+        if (msg.from.id === ADMIN_ID) {
+            bot.sendMessage(chatId, '👑 Admin Panel သို့ ဝင်ရန် အောက်က ခလုတ်ကို နှိပ်ပါ။', {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '👑 Open Admin Panel', web_app: { url: ADMIN_PANEL_URL } }]
+                    ]
+                }
+            }).catch(err => console.error('❌ Admin message error:', err));
+        } else {
+            bot.sendMessage(chatId, '⛔ You are not Authorized.').catch(err => console.error('❌ Not admin message error:', err));
+        }
+    });
+
+    // Polling error handler
+    bot.on('polling_error', async (error) => {
+        console.error('❌ Polling error:', error.message);
+        
+        if (error.message.includes('409') || error.message.includes('Conflict')) {
+            console.log('🔄 409 Conflict detected - restarting bot...');
+            
+            try {
+                await bot.stopPolling();
+                console.log('✅ Polling stopped');
+                
+                await forceClearWebhook();
+                
+                await new Promise(resolve => setTimeout(resolve, 5000));
+                
+                await bot.startPolling();
+                console.log('✅ Polling restarted successfully');
+            } catch (e) {
+                console.error('❌ Recovery failed:', e.message);
+            }
+        }
+    });
+
+    // General message handler (for debugging)
+    bot.on('message', (msg) => {
+        console.log('📨 Message received:', msg.text);
+    });
+}
 
 // ==================== Helper: Fetch Config ====================
 async function getConfig(key) {
@@ -61,48 +151,21 @@ async function getConfig(key) {
     }
 }
 
-// ==================== /start Command ====================
-bot.onText(/\/start/, async (msg) => {
-    const chatId = msg.chat.id;
-
-    try {
-        const maintenance = await getConfig('MAINTENANCE_MODE');
-        if (maintenance) {
-            const maintMsg = await getConfig('MAINTENANCE_MESSAGE') || 'Site is under maintenance. Please check back later.';
-            return bot.sendMessage(chatId, `🔧 ${maintMsg}`);
-        }
-    } catch (err) {
-        console.error('Maintenance check error:', err);
-    }
-
-    bot.sendMessage(chatId, `မင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`, {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '🎮 Play Game', web_app: { url: WEB_APP_URL } }],
-                [{ text: '📢 Join Channel', url: CHANNEL_URL }]
-            ]
-        }
-    }).catch(err => console.error('Start message error:', err));
-});
-
-// ==================== /admin Command ====================
-bot.onText(/\/admin/, (msg) => {
-    if (msg.from.id === ADMIN_ID) {
-        bot.sendMessage(msg.chat.id, '👑 Admin Panel သို့ ဝင်ရန် အောက်က ခလုတ်ကို နှိပ်ပါ။', {
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '👑 Open Admin Panel', web_app: { url: ADMIN_PANEL_URL } }]
-                ]
-            }
-        }).catch(err => console.error('Admin message error:', err));
-    } else {
-        bot.sendMessage(msg.chat.id, '⛔ You are not Authorized.').catch(err => console.error('Not admin message error:', err));
-    }
-});
-
 // ==================== Express Server Setup ====================
 const app = express();
 app.use(express.json());
+
+// ==================== Health Check ====================
+app.get('/', (req, res) => res.send('🤖 PayCoinADS Bot is Running!'));
+app.get('/health', (req, res) => res.send('OK'));
+app.get('/status', (req, res) => {
+    res.json({
+        status: 'ok',
+        botInitialized: isBotInitialized,
+        botRunning: bot ? true : false,
+        timestamp: new Date().toISOString()
+    });
+});
 
 // ==================== Fetch Profile Photo Endpoint ====================
 app.post('/fetch-photo', async (req, res) => {
@@ -119,7 +182,6 @@ app.post('/fetch-photo', async (req, res) => {
             photoUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
         }
 
-        // Update user in database (you need to implement this endpoint in Vercel)
         await axios.post(`${API_BASE_URL}/api/admin/users/${userId}/photo`, {
             photoUrl: photoUrl
         }, {
@@ -187,16 +249,14 @@ app.post('/broadcast', async (req, res) => {
     })();
 });
 
-// ==================== WITHDRAWAL NOTIFICATION (Premium Style) ====================
+// ==================== Withdrawal Notification ====================
 app.post('/withdrawal-notify', async (req, res) => {
     const { userId, amount, method, status, reason, adminId } = req.body;
 
-    // 1. Verify admin
     if (adminId !== ADMIN_ID) {
         return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // 2. Validate required fields
     if (!userId || !amount || !status) {
         return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -211,52 +271,35 @@ app.post('/withdrawal-notify', async (req, res) => {
             minute: '2-digit'
         });
 
-        // 3. COMPLETED - Premium Style
         if (status === 'completed') {
             message = 
                 `🎊 *ငွေထုတ်ယူမှု အောင်မြင်ပါသည်။* 🎊\n\n` +
-                
                 `လူကြီးမင်း တောင်းဆိုထားသော ငွေထုတ်ယူမှု (Withdrawal) အား စစ်ဆေးပြီး ` +
                 `သင်၏ ငွေလွှဲအကောင့်ထဲသို့ ငွေများ အောင်မြင်စွာ လွှဲပြောင်းပေးပြီး ဖြစ်ပါသည်။ 💸\n\n` +
-                
                 `📝 *အချက်အလက်များ:*\n` +
                 `━━━━━━━━━━━━━━━━━━\n` +
                 `💰 *ပမာဏ:* \`${amount} Coins\`\n` +
                 `🏦 *နည်းလမ်း:* ${method ? method.toUpperCase() : 'N/A'}\n` +
                 `🕒 *အချိန်:* ${now}\n` +
                 `━━━━━━━━━━━━━━━━━━\n\n` +
-                
                 `PayCoinAds ကို ယုံကြည်စွာ အသုံးပြုပေးသည့်အတွက် ကျေးဇူးတင်ပါသည်။ ` +
                 `ဆက်လက်ပြီး ဂိမ်းဆော့ရင်း ဒင်္ဂါးများ စုဆောင်းနိုင်ပါပြီ။ 🎮✨\n\n` +
-                
                 `✅ ငွေလက်ခံရရှိကြောင်းကို သင်၏ Wallet/Bank App တွင် ပြန်လည်စစ်ဆေးပေးပါရန်။`;
-        }
-
-        // 4. REJECTED - Premium Style
-        else if (status === 'rejected') {
+        } else if (status === 'rejected') {
             message = 
                 `❌ *ငွေထုတ်ယူမှု ငြင်းပယ်ခံရပါသည်။*\n\n` +
-                
                 `လူကြီးမင်း၏ ငွေထုတ်ယူမှု တောင်းဆိုချက်မှာ အောက်ပါအကြောင်းပြချက်ကြောင့် မအောင်မြင်ပါ။\n\n` +
-                
                 `⚠️ *အကြောင်းပြချက်:* \n\`${reason || 'အကြောင်းပြချက် မရှိပါ'}\`\n\n` +
-                
                 `💰 *ပြန်အမ်းငွေ:* \`${amount} Coins\` ကို သင့်အကောင့်ထဲသို့ ပြန်လည် ထည့်သွင်းပေးထားပါသည်။\n\n` +
-                
                 `━━━━━━━━━━━━━━━━━━\n` +
                 `🕒 *အချိန်:* ${now}\n` +
                 `━━━━━━━━━━━━━━━━━━\n\n` +
-                
                 `အချက်အလက်များကို ပြန်လည်စစ်ဆေးပြီးမှသာ နောက်တစ်ကြိမ် ထပ်မံတောင်းဆိုပေးပါရန် ` +
                 `မေတ္တာရပ်ခံအပ်ပါသည်။ 🛠️`;
-        } 
-        
-        // Invalid status
-        else {
+        } else {
             return res.status(400).json({ error: 'Invalid status' });
         }
 
-        // 5. Send message to user
         await bot.sendMessage(userId, message, { 
             parse_mode: 'Markdown',
             disable_web_page_preview: true 
@@ -267,25 +310,12 @@ app.post('/withdrawal-notify', async (req, res) => {
 
     } catch (err) {
         console.error('❌ Withdrawal notification error:', err.message);
-
-        // Handle blocked bot
         if (err.message.includes('blocked')) {
-            return res.status(200).json({
-                success: false,
-                error: 'User has blocked the bot'
-            });
+            return res.status(200).json({ success: false, error: 'User has blocked the bot' });
         }
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
-
-// ==================== Health Check ====================
-app.get('/', (req, res) => res.send('🤖 PayCoinADS Bot is Running!'));
-app.get('/health', (req, res) => res.send('OK'));
 
 // ==================== Error Handler ====================
 app.use((err, req, res, next) => {
@@ -295,29 +325,34 @@ app.use((err, req, res, next) => {
 
 // ==================== Start Server ====================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`
+
+// Initialize bot THEN start server
+initializeBot().then(() => {
+    app.listen(PORT, () => {
+        console.log(`
 ╔══════════════════════════════════════╗
 ║    🤖 PayCoinADS Bot is Ready!       ║
 ╠══════════════════════════════════════╣
 ║ 📡 Port: ${PORT.toString().padEnd(33)} ║
 ║ 👑 Admin ID: ${ADMIN_ID.toString().padEnd(30)} ║
-║ 📢 Channel: PayCoinADS                 ║
-║ 🌐 API: ${API_BASE_URL.replace('https://', '').padEnd(27)} ║
 ║ 🔄 Polling: Active                      ║
 ║ 🛡️ 409 Recovery: Enabled                ║
 ╚══════════════════════════════════════╝
-    `);
+        `);
+    });
+}).catch(err => {
+    console.error('❌ Failed to initialize bot:', err);
+    process.exit(1);
 });
 
 // Graceful shutdown
 process.once('SIGINT', () => {
     console.log('\n🛑 Stopping bot...');
-    bot.stopPolling();
+    if (bot) bot.stopPolling();
     process.exit(0);
 });
 process.once('SIGTERM', () => {
     console.log('\n🛑 Stopping bot...');
-    bot.stopPolling();
+    if (bot) bot.stopPolling();
     process.exit(0);
 });
