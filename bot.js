@@ -6,9 +6,10 @@ const axios = require('axios');
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEB_APP_URL = 'https://paycoinads-telegram-app.vercel.app';
 const ADMIN_PANEL_URL = 'https://paycoinads-telegram-app.vercel.app/admin.html?v=1.1';
-const CHANNEL_URL = 'https://t.me/PayCoinADS';
 const ADMIN_ID = parseInt(process.env.ADMIN_ID);
 const API_BASE_URL = process.env.API_BASE_URL || 'https://paycoinads-telegram-app.vercel.app';
+const SUPPORT_GROUP_ID = -1003748580479; // Group ထဲကို auto forward လုပ်ဖို့
+const SUPPORT_LINK = 'https://t.me/Paycoinmm'; // Admin ကိုဆက်သွယ်ရန် Link
 
 if (!BOT_TOKEN || !ADMIN_ID) {
     console.error('❌ Missing Environment Variables!');
@@ -20,6 +21,7 @@ let bot;
 let isPolling = false;
 let restartAttempts = 0;
 const MAX_RESTART_ATTEMPTS = 5;
+let CHANNEL_URL = 'https://t.me/PayCoinADS'; // Default channel link - admin ပြောင်းလို့ရမယ်
 
 // ==================== Force clear webhook ====================
 async function forceClearWebhook() {
@@ -94,7 +96,8 @@ function setupCommandHandlers() {
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: '🎮 Play Game', web_app: { url: webAppUrl } }],
-                        [{ text: '📢 Join Channel', url: CHANNEL_URL }]
+                        [{ text: '📢 Join Channel', url: CHANNEL_URL }],
+                        [{ text: '💬 Admin ကိုဆက်သွယ်ရန်', url: SUPPORT_LINK }]
                     ]
                 }
             });
@@ -104,7 +107,7 @@ function setupCommandHandlers() {
         }
     });
 
-    // /admin command
+    // ==================== /admin command ====================
     bot.onText(/\/admin/, (msg) => {
         console.log('📩 /admin command received from user:', msg.from.id);
         const chatId = msg.chat.id;
@@ -122,7 +125,99 @@ function setupCommandHandlers() {
         }
     });
 
-    // Polling error handler
+    // ==================== /setchannel command (Admin only) ====================
+    bot.onText(/\/setchannel (.+)/, async (msg, match) => {
+        const chatId = msg.chat.id;
+        const newChannelLink = match[1].trim();
+        
+        // Admin check
+        if (msg.from.id !== ADMIN_ID) {
+            return bot.sendMessage(chatId, '⛔ ဒီ command ကို Admin မှသာ သုံးလို့ရပါတယ်။');
+        }
+        
+        // Validate link (basic check)
+        if (!newChannelLink.startsWith('https://t.me/') && !newChannelLink.startsWith('http://t.me/') && !newChannelLink.startsWith('t.me/')) {
+            return bot.sendMessage(chatId, '❌ မှားယွင်းနေပါတယ်။ Channel link က t.me/ နဲ့ စရပါမယ်။\n\nဥပမာ: /setchannel https://t.me/PayCoinADS');
+        }
+        
+        // Update channel URL
+        CHANNEL_URL = newChannelLink;
+        
+        await bot.sendMessage(chatId, `✅ Channel link ကို အောက်ပါအတိုင်း ပြောင်းလိုက်ပါပြီ:\n${CHANNEL_URL}`);
+        console.log(`📢 Admin changed channel link to: ${CHANNEL_URL}`);
+    });
+
+    // ==================== Text Message Handler - Forward to Group ====================
+    bot.on('message', async (msg) => {
+        // Skip if it's a command (starting with /)
+        if (msg.text && msg.text.startsWith('/')) {
+            return;
+        }
+        
+        // Skip if it's the admin (admin messages don't need to be forwarded)
+        if (msg.from.id === ADMIN_ID) {
+            return;
+        }
+        
+        // Only forward text messages (not photos, stickers, etc.)
+        if (msg.text) {
+            try {
+                console.log(`📨 Forwarding message from user ${msg.from.id} to support group`);
+                
+                // Create a nice formatted message for the group
+                const forwardMessage = 
+                    `📩 *New Support Message*\n\n` +
+                    `👤 *User:* ${msg.from.first_name || ''} ${msg.from.last_name || ''}\n` +
+                    `🆔 *User ID:* \`${msg.from.id}\`\n` +
+                    `📝 *Message:*\n${msg.text}\n\n` +
+                    `_Reply to this user by sending a message starting with /reply ${msg.from.id}_`;
+                
+                // Send to group
+                await bot.sendMessage(SUPPORT_GROUP_ID, forwardMessage, {
+                    parse_mode: 'Markdown'
+                });
+                
+                // Confirm to user that message was sent
+                await bot.sendMessage(msg.chat.id, '✅ သင့်စာကို Admin ထံ ပို့ပေးလိုက်ပါပြီ။ မကြာမီ အကြောင်းပြန်ပါမယ်။');
+                
+                console.log(`✅ Message from user ${msg.from.id} forwarded to group`);
+            } catch (err) {
+                console.error('❌ Failed to forward message to group:', err.message);
+                
+                // Notify user that there was an error
+                await bot.sendMessage(msg.chat.id, '❌ စာပို့ရာတွင် အဆင်မပြေမှုရှိသွားပါသည်။ နောက်မှ ထပ်ကြိုးစားကြည့်ပါ။');
+            }
+        }
+    });
+
+    // ==================== /reply command (Admin to reply to users) ====================
+    bot.onText(/\/reply (\d+) (.+)/, async (msg, match) => {
+        const chatId = msg.chat.id;
+        
+        // Admin check (only group members can reply)
+        if (msg.from.id !== ADMIN_ID && chatId !== SUPPORT_GROUP_ID) {
+            return bot.sendMessage(chatId, '⛔ ဒီ command ကို Admin မှသာ သုံးလို့ရပါတယ်။');
+        }
+        
+        const targetUserId = parseInt(match[1]);
+        const replyMessage = match[2];
+        
+        try {
+            await bot.sendMessage(targetUserId, 
+                `📨 *Admin ထံမှ အကြောင်းပြန်စာ*\n\n${replyMessage}\n\n` +
+                `_ပြဿနာရှိပါက ထပ်မံမေးမြန်းနိုင်ပါတယ်။_`, 
+                { parse_mode: 'Markdown' }
+            );
+            
+            await bot.sendMessage(chatId, `✅ စာကို ပြန်ပို့ပြီးပါပြီ။`);
+            console.log(`📨 Admin replied to user ${targetUserId}`);
+        } catch (err) {
+            console.error(`❌ Failed to reply to user ${targetUserId}:`, err.message);
+            await bot.sendMessage(chatId, `❌ စာပြန်မရပါ။ User က Bot ကို block ထားတာ ဖြစ်နိုင်ပါတယ်။`);
+        }
+    });
+
+    // ==================== Polling error handler ====================
     bot.on('polling_error', async (error) => {
         console.error('❌ Polling error:', error.message);
         
@@ -153,11 +248,6 @@ function setupCommandHandlers() {
             }
         }
     });
-
-    // General message handler (for debugging)
-    bot.on('message', (msg) => {
-        console.log('📨 Message received:', msg.text);
-    });
 }
 
 // ==================== Helper: Fetch Config ====================
@@ -185,6 +275,7 @@ app.get('/status', (req, res) => {
     res.json({
         status: 'ok',
         polling: isPolling,
+        channelUrl: CHANNEL_URL,
         timestamp: new Date().toISOString()
     });
 });
@@ -354,7 +445,7 @@ app.post('/withdrawal-notify', async (req, res) => {
     }
 });
 
-// ==================== NEW: Referral Notification Endpoint ====================
+// ==================== Referral Notification Endpoint ====================
 app.post('/referral-notify', async (req, res) => {
     const { referrerId, newUserId } = req.body;
 
@@ -384,7 +475,6 @@ app.post('/referral-notify', async (req, res) => {
     } catch (err) {
         console.error('❌ Referral notification error:', err.message);
         if (err.message.includes('blocked')) {
-            // User has blocked the bot - still return success to backend
             return res.status(200).json({ success: false, error: 'Referrer has blocked the bot' });
         }
         res.status(500).json({ success: false, error: err.message });
@@ -409,6 +499,8 @@ initializeBot().then(() => {
 ╠══════════════════════════════════════╣
 ║ 📡 Port: ${PORT.toString().padEnd(33)} ║
 ║ 👑 Admin ID: ${ADMIN_ID.toString().padEnd(30)} ║
+║ 📢 Channel: ${CHANNEL_URL.slice(0, 30).padEnd(30)} ║
+║ 💬 Support Group: ${SUPPORT_GROUP_ID.toString().padEnd(27)} ║
 ║ 🔄 Polling: Active                      ║
 ║ 🛡️ 409 Recovery: Enabled                ║
 ║ 🔁 Max Retries: ${MAX_RESTART_ATTEMPTS}                         ║
