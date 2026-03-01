@@ -73,16 +73,27 @@ async function initializeBot() {
 function setupCommandHandlers() {
     if (!bot) return;
 
-    // /start command
-    bot.onText(/\/start/, async (msg) => {
+    // ==================== UPDATED: /start command with referral support ====================
+    bot.onText(/\/start(?:\s+(\d+))?/, async (msg, match) => {
         console.log('📩 /start command received from user:', msg.from.id);
+        
         const chatId = msg.chat.id;
+        const referrerId = match[1]; // This will be undefined if no referral ID is provided
+        
+        // Build WebApp URL with or without referral
+        let webAppUrl = WEB_APP_URL;
+        if (referrerId) {
+            webAppUrl = `${WEB_APP_URL}?startapp=${referrerId}`;
+            console.log(`🔗 Referral ID detected: ${referrerId} - User will open app with startapp parameter`);
+        } else {
+            console.log(`🔗 No referral ID - User will open app normally`);
+        }
         
         try {
             await bot.sendMessage(chatId, `မင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`, {
                 reply_markup: {
                     inline_keyboard: [
-                        [{ text: '🎮 Play Game', web_app: { url: WEB_APP_URL } }],
+                        [{ text: '🎮 Play Game', web_app: { url: webAppUrl } }],
                         [{ text: '📢 Join Channel', url: CHANNEL_URL }]
                     ]
                 }
