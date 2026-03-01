@@ -73,7 +73,7 @@ async function initializeBot() {
 function setupCommandHandlers() {
     if (!bot) return;
 
-    // ==================== UPDATED: /start command with referral support ====================
+    // ==================== /start command with referral support ====================
     bot.onText(/\/start(?:\s+(\d+))?/, async (msg, match) => {
         console.log('📩 /start command received from user:', msg.from.id);
         
@@ -349,6 +349,43 @@ app.post('/withdrawal-notify', async (req, res) => {
         console.error('❌ Withdrawal notification error:', err.message);
         if (err.message.includes('blocked')) {
             return res.status(200).json({ success: false, error: 'User has blocked the bot' });
+        }
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==================== NEW: Referral Notification Endpoint ====================
+app.post('/referral-notify', async (req, res) => {
+    const { referrerId, newUserId } = req.body;
+
+    if (!referrerId || !newUserId) {
+        return res.status(400).json({ error: 'Missing referrerId or newUserId' });
+    }
+
+    if (!bot || !isPolling) {
+        return res.status(503).json({ error: 'Bot not ready' });
+    }
+
+    try {
+        const message = 
+            `🎊 *မင်္ဂလာပါ!* 🎊\n\n` +
+            `လူကြီးမင်း၏ Link မှတစ်ဆင့် လူသစ်တစ်ယောက် ([အသုံးပြုသူ ${newUserId}](tg://user?id=${newUserId})) ဝင်ရောက်လာပါသဖြင့် *၁၀ Coins* လက်ဆောင် ရရှိပါသည်။\n\n` +
+            `ကျေးဇူးတင်ပါသည်။ 🙏\n` +
+            `PayCoinADS`;
+
+        await bot.sendMessage(parseInt(referrerId), message, { 
+            parse_mode: 'Markdown',
+            disable_web_page_preview: true 
+        });
+        
+        console.log(`✅ Referral notification sent to referrer ${referrerId} about new user ${newUserId}`);
+        res.json({ success: true });
+
+    } catch (err) {
+        console.error('❌ Referral notification error:', err.message);
+        if (err.message.includes('blocked')) {
+            // User has blocked the bot - still return success to backend
+            return res.status(200).json({ success: false, error: 'Referrer has blocked the bot' });
         }
         res.status(500).json({ success: false, error: err.message });
     }
