@@ -1,6 +1,10 @@
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const axios = require('axios');
+const multer = require('multer');
+
+// Multer for receiving screenshot from web backend
+const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ==================== Configuration ====================
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -446,8 +450,14 @@ app.post('/withdrawal-notify', async (req, res) => {
 });
 
 // ==================== VIP Purchase Notify (Screenshot Forward to Admin) ====================
-app.post('/vip-purchase-notify', async (req, res) => {
-    const { purchaseId, userId, userName, amount, paymentMethod, screenshotData } = req.body;
+app.post('/vip-purchase-notify',
+    uploadMiddleware.single('screenshot'),
+    async (req, res) => {
+    const purchaseId   = req.body.purchaseId   || '';
+    const userId       = req.body.userId       || '';
+    const userName     = req.body.userName     || '';
+    const amount       = req.body.amount       || '5000';
+    const paymentMethod = req.body.paymentMethod || '';
 
     if (!bot || !isPolling) {
         return res.status(503).json({ error: 'Bot not ready' });
@@ -463,17 +473,14 @@ app.post('/vip-purchase-notify', async (req, res) => {
             `🛒 *Purchase ID:* \`${purchaseId}\`\n\n` +
             `Admin Panel မှ confirm ပေးပါ။`;
 
-        // If screenshot is base64 image
-        if (screenshotData && screenshotData.startsWith('data:image')) {
-            const base64Data = screenshotData.replace(/^data:image\/\w+;base64,/, '');
-            const imgBuffer = Buffer.from(base64Data, 'base64');
-
-            await bot.sendPhoto(ADMIN_ID, imgBuffer, {
+        if (req.file && req.file.buffer) {
+            // Send actual image buffer directly — like KBZ backend
+            await bot.sendPhoto(ADMIN_ID, req.file.buffer, {
                 caption: caption,
                 parse_mode: 'Markdown'
             });
         } else {
-            // No screenshot - send text only
+            // No screenshot — send text only
             await bot.sendMessage(ADMIN_ID, caption, { parse_mode: 'Markdown' });
         }
 
