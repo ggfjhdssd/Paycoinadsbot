@@ -445,6 +445,82 @@ app.post('/withdrawal-notify', async (req, res) => {
     }
 });
 
+// ==================== VIP Purchase Notify (Screenshot Forward to Admin) ====================
+app.post('/vip-purchase-notify', async (req, res) => {
+    const { purchaseId, userId, userName, amount, paymentMethod, screenshotData } = req.body;
+
+    if (!bot || !isPolling) {
+        return res.status(503).json({ error: 'Bot not ready' });
+    }
+
+    try {
+        const caption =
+            `👑 *VIP Purchase Request*\n\n` +
+            `👤 *User:* ${userName || userId}\n` +
+            `🆔 *User ID:* \`${userId}\`\n` +
+            `💰 *Amount:* ${amount} ကျပ်\n` +
+            `🏦 *Method:* ${paymentMethod}\n` +
+            `🛒 *Purchase ID:* \`${purchaseId}\`\n\n` +
+            `Admin Panel မှ confirm ပေးပါ။`;
+
+        // If screenshot is base64 image
+        if (screenshotData && screenshotData.startsWith('data:image')) {
+            const base64Data = screenshotData.replace(/^data:image\/\w+;base64,/, '');
+            const imgBuffer = Buffer.from(base64Data, 'base64');
+
+            await bot.sendPhoto(ADMIN_ID, imgBuffer, {
+                caption: caption,
+                parse_mode: 'Markdown'
+            });
+        } else {
+            // No screenshot - send text only
+            await bot.sendMessage(ADMIN_ID, caption, { parse_mode: 'Markdown' });
+        }
+
+        console.log(`✅ VIP purchase screenshot forwarded to admin for user ${userId}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('❌ VIP purchase notify error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==================== VIP Expired Notify ====================
+app.post('/vip-expired-notify', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId || !bot || !isPolling) return res.status(400).json({ error: 'Missing data or bot not ready' });
+    try {
+        await bot.sendMessage(parseInt(userId),
+            `⏰ *VIP Mode သက်တမ်းကုန်သွားပါပြီ*\n\n` +
+            `သင့် VIP Mode တစ်လသက်တမ်းကုန်သွားပါပြီ။\n` +
+            `ဆက်လက် VIP Mode ရရှိနိုင်ရန် ထပ်မံဝယ်ယူနိုင်ပါတယ်။ 👑`,
+            { parse_mode: 'Markdown' }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('❌ VIP expired notify error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==================== VIP Confirmed Notify ====================
+app.post('/vip-confirmed-notify', async (req, res) => {
+    const { userId } = req.body;
+    if (!userId || !bot || !isPolling) return res.status(400).json({ error: 'Missing data or bot not ready' });
+    try {
+        await bot.sendMessage(parseInt(userId),
+            `🎉 *VIP Mode အတည်ပြုပြီးပါပြီ!*\n\n` +
+            `Admin မှ သင့် VIP Mode ကို confirm ပေးပါပြီ။\n` +
+            `App ထဲမှ VIP Mode ကို On/Off ပြောင်းနိုင်ပါပြီ။ 👑✨`,
+            { parse_mode: 'Markdown' }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('❌ VIP confirmed notify error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ==================== Referral Notification Endpoint ====================
 app.post('/referral-notify', async (req, res) => {
     const { referrerId, newUserId } = req.body;
