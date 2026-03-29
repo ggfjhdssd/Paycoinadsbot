@@ -9,10 +9,10 @@ const uploadMiddleware = multer({ storage: multer.memoryStorage(), limits: { fil
 
 // ==================== Configuration ====================
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const WEB_APP_URL = 'https://paycoinads-telegram-app.vercel.app';
-const ADMIN_PANEL_URL = 'https://paycoinads-telegram-app.vercel.app/admin.html?v=1.1';
+const WEB_APP_URL = 'https://paycoinads-frontend.vercel.app';
+const ADMIN_PANEL_URL = 'https://paycoinads-frontend.vercel.app/admin.html';
 const ADMIN_ID = parseInt(process.env.ADMIN_ID);
-const API_BASE_URL = process.env.API_BASE_URL || 'https://paycoinads-telegram-app.vercel.app';
+const API_BASE_URL = process.env.API_BASE_URL || 'https://paycoinads-backend.onrender.com';
 const SUPPORT_GROUP_ID = -1003748580479; // Group ထဲကို auto forward လုပ်ဖို့
 const SUPPORT_LINK = 'https://t.me/Paycoinmm'; // Admin ကိုဆက်သွယ်ရန် Link
 
