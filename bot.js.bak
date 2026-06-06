@@ -22,7 +22,6 @@ let isPolling = false;
 let restartAttempts = 0;
 const MAX_RESTART_ATTEMPTS = 5;
 let CHANNEL_URL = 'https://t.me/PayCoinADS';
-let CHANNEL_JOIN_REQUIRED = true; // Admin can toggle with /off and /on
 
 // ==================== Force clear webhook ====================
 async function forceClearWebhook() {
@@ -56,58 +55,14 @@ async function initializeBot() {
     }
 }
 
-// ==================== Persist Config via Backend ====================
-async function loadPersistedConfig() {
-    try {
-        const res = await axios.get(`${API_BASE_URL}/api/ui-config`, { timeout: 5000 });
-        if (res.data.CHANNEL_JOIN_REQUIRED !== undefined) {
-            CHANNEL_JOIN_REQUIRED = res.data.CHANNEL_JOIN_REQUIRED !== false;
-        }
-        if (res.data.CHANNEL_URL) {
-            CHANNEL_URL = res.data.CHANNEL_URL;
-        }
-        console.log(`✅ Config loaded: joinRequired=${CHANNEL_JOIN_REQUIRED}, channel=${CHANNEL_URL}`);
-    } catch (err) {
-        console.error('⚠️ Could not load persisted config:', err.message);
-    }
-}
-
-async function saveConfigToBackend(key, value) {
-    try {
-        await axios.post(`${API_BASE_URL}/api/admin/settings`,
-            { [key]: value },
-            { headers: { 'X-Telegram-Init-Data': 'bot' }, timeout: 5000 }
-        );
-    } catch (err) {
-        console.error(`⚠️ Could not save ${key} to backend:`, err.message);
-    }
-}
-
-// ==================== Channel Join Check ====================
-async function checkChannelMembership(userId) {
-    if (!CHANNEL_JOIN_REQUIRED) return true; // join check ပိတ်ထားလျှင် skip
-    try {
-        // Extract channel username from URL: https://t.me/PayCoinADS → @PayCoinADS
-        const urlParts = CHANNEL_URL.replace('https://t.me/', '').replace('http://t.me/', '').replace('t.me/', '');
-        const channelUsername = '@' + urlParts.split('/')[0].split('?')[0];
-        const member = await bot.getChatMember(channelUsername, userId);
-        const status = member.status;
-        return ['member', 'administrator', 'creator'].includes(status);
-    } catch (err) {
-        console.error('❌ Channel membership check failed:', err.message);
-        return true; // check fail ဖြစ်ရင် user ကို block မလုပ်ဘဲ ဆက်ခွင့်ပေး
-    }
-}
-
 // ==================== Command Handlers ====================
 function setupCommandHandlers() {
     if (!bot) return;
 
-    // /start with referral + channel join check
+    // /start with referral
     bot.onText(/\/start(?:\s+(\d+))?/, async (msg, match) => {
         console.log('📩 /start command received from user:', msg.from.id);
         const chatId = msg.chat.id;
-        const userId = msg.from.id;
         const referrerId = match[1];
         let webAppUrl = WEB_APP_URL;
         if (referrerId) {
@@ -115,97 +70,18 @@ function setupCommandHandlers() {
             console.log(`🔗 Referral ID detected: ${referrerId}`);
         }
         try {
-            // ── Channel join check ──
-            if (CHANNEL_JOIN_REQUIRED) {
-                const isJoined = await checkChannelMembership(userId);
-                if (!isJoined) {
-                    // မ join ရသေးဘဲ ─ join ဖိတ်မည်
-                    await bot.sendMessage(chatId,
-                        `👋 မင်္ဂလာပါ!\n\n` +
-                        `🔔 PayCoinADS ကိုသုံးရန် အောက်ပါ Channel ကို အရင် Join လုပ်ပါ။\n\n` +
-                        `Join ပြီးပြီဆိုရင် *"✅ Joined - စစ်ဆေးပါ"* ကို နှိပ်ပါ။`,
-                        {
-                            parse_mode: 'Markdown',
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: '📢 Channel Join လုပ်ရန်', url: CHANNEL_URL }],
-                                    [{ text: '✅ Joined - စစ်ဆေးပါ', callback_data: `check_join:${referrerId || ''}` }]
-                                ]
-                            }
-                        }
-                    );
-                    return;
+            await bot.sendMessage(chatId, `မင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`, {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '🎮 Play Game', web_app: { url: webAppUrl } }],
+                        [{ text: '📢 Join Channel', url: CHANNEL_URL }],
+                        [{ text: '💬 Admin ကိုဆက်သွယ်ရန်', url: SUPPORT_LINK }]
+                    ]
                 }
-            }
-
-            // ── Join ဖြစ်ပြီ သို့ join check ပိတ် ─ app ဖွင့်ပေး ──
-            await bot.sendMessage(chatId,
-                `မင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`,
-                {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '🎮 Play Game', web_app: { url: webAppUrl } }],
-                            [{ text: '📢 Join Channel', url: CHANNEL_URL }],
-                            [{ text: '💬 Admin ကိုဆက်သွယ်ရန်', url: SUPPORT_LINK }]
-                        ]
-                    }
-                }
-            );
+            });
             console.log('✅ /start response sent to user:', chatId);
         } catch (err) {
             console.error('❌ /start error:', err.message);
-        }
-    });
-
-    // ✅ Joined callback - "Joined စစ်ဆေးပါ" button
-    bot.on('callback_query', async (query) => {
-        const chatId = query.message.chat.id;
-        const userId = query.from.id;
-        const data = query.data || '';
-
-        if (data.startsWith('check_join:')) {
-            const referrerId = data.split(':')[1] || null;
-            let webAppUrl = WEB_APP_URL;
-            if (referrerId) webAppUrl = `${WEB_APP_URL}?startapp=${referrerId}`;
-
-            await bot.answerCallbackQuery(query.id);
-
-            const isJoined = await checkChannelMembership(userId);
-            if (!isJoined) {
-                // မ join ရသေးဘူး
-                try {
-                    await bot.editMessageText(
-                        `❌ Channel ကို မ Join ရသေးပါ။\n\nChannel Join ပြီးမှ စစ်ဆေးပါ။`,
-                        {
-                            chat_id: chatId,
-                            message_id: query.message.message_id,
-                            reply_markup: {
-                                inline_keyboard: [
-                                    [{ text: '📢 Channel Join လုပ်ရန်', url: CHANNEL_URL }],
-                                    [{ text: '✅ Joined - စစ်ဆေးပါ', callback_data: data }]
-                                ]
-                            }
-                        }
-                    );
-                } catch(e) {}
-            } else {
-                // Join ဖြစ်ပြီ - app ဖွင့်ပေး
-                try {
-                    await bot.deleteMessage(chatId, query.message.message_id);
-                } catch(e) {}
-                await bot.sendMessage(chatId,
-                    `✅ Channel join စစ်ဆေးမှု အောင်မြင်ပါပြီ!\n\nမင်္ဂလာပါ PayCoinADS မှ ကြိုဆိုပါတယ်။ 🎉\n\nဂိမ်းဆော့ပြီးပိုက်ဆံရှာရန် အောက်က ခလုတ်ကို နှိပ်ပါ။`,
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: '🎮 Play Game', web_app: { url: webAppUrl } }],
-                                [{ text: '📢 Join Channel', url: CHANNEL_URL }],
-                                [{ text: '💬 Admin ကိုဆက်သွယ်ရန်', url: SUPPORT_LINK }]
-                            ]
-                        }
-                    }
-                );
-            }
         }
     });
 
@@ -231,77 +107,8 @@ function setupCommandHandlers() {
             return bot.sendMessage(chatId, '❌ မှားယွင်းနေပါတယ်။ Channel link က t.me/ နဲ့ စရပါမယ်။\n\nဥပမာ: /setchannel https://t.me/PayCoinADS');
         }
         CHANNEL_URL = newChannelLink;
-        await saveConfigToBackend('CHANNEL_URL', CHANNEL_URL);
-        const status = CHANNEL_JOIN_REQUIRED ? '🟢 ON (Join လိုအပ်သည်)' : '🔴 OFF (Join မလိုဘူး)';
-        await bot.sendMessage(chatId,
-            `✅ Channel link ပြောင်းပြီးပါပြီ!\n\n` +
-            `📢 Channel: ${CHANNEL_URL}\n` +
-            `🔧 Join Check: ${status}`
-        );
+        await bot.sendMessage(chatId, `✅ Channel link ကို အောက်ပါအတိုင်း ပြောင်းလိုက်ပါပြီ:\n${CHANNEL_URL}`);
         console.log(`📢 Admin changed channel link to: ${CHANNEL_URL}`);
-    });
-
-    // /off - channel join check ပိတ်မည်
-    bot.onText(/\/off$/, async (msg) => {
-        const chatId = msg.chat.id;
-        if (msg.from.id !== ADMIN_ID) return bot.sendMessage(chatId, '⛔ ဒီ command ကို Admin မှသာ သုံးလို့ရပါတယ်။');
-        CHANNEL_JOIN_REQUIRED = false;
-        await saveConfigToBackend('CHANNEL_JOIN_REQUIRED', false);
-        await bot.sendMessage(chatId,
-            `✅ Channel Join Check ကို *ပိတ်လိုက်ပါပြီ*\n\n` +
-            `User တွေ channel join မထားလည်း app သုံးလို့ ရပါပြီ။`,
-            { parse_mode: 'Markdown' }
-        );
-        console.log('🔴 Admin disabled channel join requirement');
-    });
-
-    // /on - channel join check ဖွင့်မည်
-    bot.onText(/\/on$/, async (msg) => {
-        const chatId = msg.chat.id;
-        if (msg.from.id !== ADMIN_ID) return bot.sendMessage(chatId, '⛔ ဒီ command ကို Admin မှသာ သုံးလို့ရပါတယ်။');
-        CHANNEL_JOIN_REQUIRED = true;
-        await saveConfigToBackend('CHANNEL_JOIN_REQUIRED', true);
-        await bot.sendMessage(chatId,
-            `✅ Channel Join Check ကို *ဖွင့်လိုက်ပါပြီ*\n\n` +
-            `User တွေ ${CHANNEL_URL} ကို join မှသာ app သုံးနိုင်မည်။`,
-            { parse_mode: 'Markdown' }
-        );
-        console.log('🟢 Admin enabled channel join requirement');
-    });
-
-    // /status - current settings ကြည့်ရန်
-    bot.onText(/\/status$/, async (msg) => {
-        const chatId = msg.chat.id;
-        if (msg.from.id !== ADMIN_ID) return bot.sendMessage(chatId, '⛔ ဒီ command ကို Admin မှသာ သုံးလို့ရပါတယ်။');
-        const joinStatus = CHANNEL_JOIN_REQUIRED ? '🟢 ON (Join လိုအပ်သည်)' : '🔴 OFF (Join မလိုဘူး)';
-        await bot.sendMessage(chatId,
-            `📊 *Bot Status*\n\n` +
-            `📢 Channel: ${CHANNEL_URL}\n` +
-            `🔧 Join Check: ${joinStatus}`,
-            { parse_mode: 'Markdown' }
-        );
-    });
-
-    // /help - admin commands list
-    bot.onText(/\/help$/, async (msg) => {
-        const chatId = msg.chat.id;
-        if (msg.from.id !== ADMIN_ID) return bot.sendMessage(chatId, '⛔ ဒီ command ကို Admin မှသာ သုံးလို့ရပါတယ်။');
-        await bot.sendMessage(chatId,
-            `👑 *Admin Commands*\n\n` +
-            `📢 *Channel စီမံခန့်ခွဲမှု*\n` +
-            `/setchannel [link] — Channel link ပြောင်းရန်\n` +
-            `   ဥပမာ: /setchannel https://t.me/NewChannel\n\n` +
-            `/on — Channel join check ဖွင့်ရန်\n` +
-            `/off — Channel join check ပိတ်ရန် (user တွေ join မလုပ်ဘဲ သုံးလို့ရ)\n` +
-            `/status — လက်ရှိ settings ကြည့်ရန်\n\n` +
-            `👤 *User စီမံခန့်ခွဲမှု*\n` +
-            `/admin — Admin panel ဖွင့်ရန်\n` +
-            `/reply [userId] [message] — User ကို reply ပေးရန်\n\n` +
-            `📌 *လက်ရှိ Settings*\n` +
-            `Channel: ${CHANNEL_URL}\n` +
-            `Join Check: ${CHANNEL_JOIN_REQUIRED ? '🟢 ON' : '🔴 OFF'}`,
-            { parse_mode: 'Markdown' }
-        );
     });
 
     // Forward user messages to support group
@@ -591,8 +398,7 @@ app.use((err, req, res, next) => {
 // ==================== Start Server ====================
 const PORT = process.env.PORT || 3000;
 
-initializeBot().then(async () => {
-    await loadPersistedConfig(); // Restore channel URL & join setting from backend
+initializeBot().then(() => {
     app.listen(PORT, () => {
         console.log(`
 ╔══════════════════════════════════════╗
